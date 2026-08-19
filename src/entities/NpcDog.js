@@ -14,6 +14,7 @@ export class NpcDog {
     this.direction = 'left'; // 素材默认朝左
     this.mode = 'free'; // free=自由游走 follow=跟随团团
     this.busy = false; // 播放抚摸动画时不动
+    this.accompanySleep = false; // 团团睡觉时：小狗也安静陪伴睡觉
 
     this.wanderTarget = null;
     this.wanderTimer = null;
@@ -21,7 +22,7 @@ export class NpcDog {
     this.patrolCallback = null;
 
     // 动画状态
-    this.state = 'idle'; // idle | run | pet
+    this.state = 'idle'; // idle | run | pet | sleep
     this.frameTimer = null;
     this.frameIndex = 0;
     this.blinkTimer = null;
@@ -137,8 +138,28 @@ export class NpcDog {
     this.wanderTarget = null;
     this.element.classList.toggle('following', this.mode === 'follow');
     if (this.mode === 'follow') this.stopRun();
-    else this.scheduleWander();
+    else if (!this.accompanySleep) this.scheduleWander();
     eventBus.emit('dog:modechange', { mode: this.mode });
+  }
+
+  /** 团团睡觉时：小狗陪伴睡觉（安静趴在团团脚边，不移动不眨眼） */
+  setAccompanySleep(sleeping) {
+    if (this.accompanySleep === sleeping) return;
+    this.accompanySleep = sleeping;
+    if (sleeping) {
+      // 进入陪伴睡觉：停止游走、停止定点、显示睡觉精灵
+      this.wanderTarget = null;
+      this.patrolTarget = null;
+      this.patrolCallback = null;
+      if (this.wanderTimer) { clearTimeout(this.wanderTimer); this.wanderTimer = null; }
+      if (this.blinkTimer) { clearTimeout(this.blinkTimer); this.blinkTimer = null; }
+      this.setState('sleep');
+    } else {
+      // 醒来：恢复眨眼与游走
+      this.setState('idle');
+      if (this.mode === 'free') this.scheduleWander();
+      this.scheduleBlink();
+    }
   }
 
   // ---------- 动画 ----------
@@ -149,7 +170,9 @@ export class NpcDog {
     this.clearFrameTimer();
     if (state === 'run') this.playFrames(this.config.dogSprites.run, this.config.dog.runFrameMs, true);
     else if (state === 'pet') this.playFrames(this.config.dogSprites.pet, this.config.dog.petFrameMs, false);
-    else this.showIdle();
+    else if (state === 'sleep') {
+      this.image.setAttribute('src', this.config.dogSprites.standSleep);
+    } else this.showIdle();
   }
 
   /** 播放帧动画（loop 可选） */
@@ -178,6 +201,7 @@ export class NpcDog {
 
   /** 站立（睁眼），并安排眨眼 */
   showIdle() {
+    if (this.accompanySleep) return; // 陪伴睡觉时不切换到睁眼
     this.image.setAttribute('src', this.config.dogSprites.stand);
     this.scheduleBlink();
   }
@@ -191,14 +215,15 @@ export class NpcDog {
 
   /** 眨眼：站立时周期切换 睁眼→闭眼→睁眼 */
   scheduleBlink() {
+    if (this.accompanySleep) return; // 陪伴睡觉时不眨眼
     if (this.blinkTimer) clearTimeout(this.blinkTimer);
     const [min, max] = this.config.dog.blinkInterval;
     this.blinkTimer = setTimeout(() => {
       this.blinkTimer = null;
-      if (this.state === 'idle') {
+      if (this.state === 'idle' && !this.accompanySleep) {
         this.image.setAttribute('src', this.config.dogSprites.standBlink);
         setTimeout(() => {
-          if (this.state === 'idle') this.image.setAttribute('src', this.config.dogSprites.stand);
+          if (this.state === 'idle' && !this.accompanySleep) this.image.setAttribute('src', this.config.dogSprites.stand);
         }, this.config.dog.blinkDuration);
       }
       this.scheduleBlink();
@@ -238,12 +263,12 @@ export class NpcDog {
   }
 
   scheduleWander() {
-    if (this.mode !== 'free') return;
+    if (this.mode !== 'free' || this.accompanySleep) return; // 陪伴睡觉时不游走
     if (this.wanderTimer) clearTimeout(this.wanderTimer);
     const [min, max] = this.config.dog.wanderInterval;
     this.wanderTimer = setTimeout(() => {
       this.wanderTimer = null;
-      if (this.mode !== 'free' || this.busy || this.patrolTarget) return;
+      if (this.mode !== 'free' || this.busy || this.patrolTarget || this.accompanySleep) return;
       const m = this.config.dog.margin;
       this.wanderTarget = {
         x: randomRange(m, Math.max(m, window.innerWidth - this.config.dog.size - m)),
@@ -254,7 +279,7 @@ export class NpcDog {
 
   /** 每帧更新（自由游走 / 跟随团团 / 定点移动） */
   update(dt) {
-    if (this.busy) return; // 抚摸中不动
+    if (this.accompanySleep || this.busy) return; // 陪伴睡觉/抚摸中不动
 
     // 定点移动（捡球/回程）优先
     if (this.patrolTarget) {

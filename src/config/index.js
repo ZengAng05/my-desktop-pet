@@ -47,6 +47,7 @@ export const CONFIG = {
   dogSprites: {
     stand: `${base}assets/npc/dog/stand.png`, // 站立（睁眼）
     standBlink: `${base}assets/npc/dog/stand_blink.png`, // 站立闭眼（眨眼帧）
+    standSleep: `${base}assets/sprites/npc/dog_stand_sleep.png`, // 陪伴睡觉（安静趴着）
     run: Array.from({ length: 10 }, (_, i) => `${base}assets/npc/dog/run_${i + 1}.png`), // 跑动画 10 帧
     pet: Array.from({ length: 4 }, (_, i) => `${base}assets/npc/dog/pet_${i + 1}.png`) // 被抚摸 4 帧
   },

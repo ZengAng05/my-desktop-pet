@@ -190,6 +190,7 @@ async function bootstrap() {
 
   // 扔球：小团子随机向前方扔出网球（抛物线，随机落点）
   const throwBall = () => {
+    if (pet.isSleeping) return; // 睡觉时不扔球（双重保险）
     const st = tennisBall.getState();
     if (st === 'flying' || st === 'holding') return; // 球在空中/狗在叼时不重复扔
     pet.dialogue.say('dogThrow');
@@ -240,9 +241,25 @@ async function bootstrap() {
     });
   };
 
+  // 宠物睡觉时：狗互动的拒绝反馈（共用逻辑）
+  const refuseWhenSleeping = (verb) => {
+    if (!pet.isSleeping) return false;
+    // 宠物被吵到：50% 生气 / 50% 继续说梦话
+    if (chance(0.5)) {
+      pet.setMood('angry');
+      pet.dialogue.say('sleepRefuse');
+      soundManager.play('angry');
+    } else {
+      pet.dialogue.say('sleepTalk');
+      soundManager.play('sleep');
+    }
+    return true;
+  };
+
   // 狗交互事件：抚摸 / 切换跟随 / 扔球
   eventBus.on('dog:pet', () => {
     if (dog.busy) return;
+    if (refuseWhenSleeping('摸小狗')) return;
     pet.dialogue.say('dogPet');
     pet.setMood('happy');
     // 狗在团团哪一侧，就移动到哪一侧（不跨过团团），团团面向狗
@@ -261,11 +278,20 @@ async function bootstrap() {
       dog.pet();
     });
   });
-  eventBus.on('dog:toggle-follow', () => dog.setMode(dog.mode === 'follow' ? 'free' : 'follow'));
-  eventBus.on('dog:modechange', ({ mode }) => pet.dialogue.say(mode === 'follow' ? 'dogFollow' : 'dogFree'));
+  eventBus.on('dog:toggle-follow', () => {
+    if (refuseWhenSleeping('切换跟随')) return;
+    dog.setMode(dog.mode === 'follow' ? 'free' : 'follow');
+  });
+  eventBus.on('dog:modechange', ({ mode }) => {
+    if (pet.isSleeping) return; // 睡觉时狗模式切换也不说话（避免打扰）
+    pet.dialogue.say(mode === 'follow' ? 'dogFollow' : 'dogFree');
+  });
 
   // 选项卡「扔网球」：小团子扔出（随机落点抛物线）
-  eventBus.on('dog:menu-throw', () => throwBall());
+  eventBus.on('dog:menu-throw', () => {
+    if (refuseWhenSleeping('扔球')) return;
+    throwBall();
+  });
 
   // 8. 交互处理
   new InteractionHandler(CONFIG, pet);
@@ -387,6 +413,18 @@ async function bootstrap() {
     soundManager.play('sleep');
   };
 
+  /** 让小狗陪伴睡觉：移动到团团脚边然后趴下睡 */
+  const accompanyDogToSleep = () => {
+    const maxX = Math.max(0, window.innerWidth - CONFIG.dog.size);
+    const maxY = Math.max(0, window.innerHeight - CONFIG.dog.size);
+    const targetX = clamp(pet.x + CONFIG.pet.size - 10, 0, maxX);
+    const targetY = clamp(pet.y + CONFIG.pet.size - 10, 0, maxY);
+    dog.moveTo(targetX, targetY, () => {
+      dog.stopRun();
+      dog.setAccompanySleep(true);
+    });
+  };
+
   /** 进入夜间睡眠：必须先在椅子上（走向椅子定位后再入睡） */
   const startNightSleep = () => {
     pet.isSleeping = true;
@@ -396,6 +434,8 @@ async function bootstrap() {
     goToChairAndThen(() => {
       movementAI.pause(); // 到达椅子后完全停止移动
       doSleepOnSpot();
+      // 团团睡着后，小狗也跑到脚边趴下陪伴睡觉
+      accompanyDogToSleep();
     });
   };
 
@@ -411,6 +451,7 @@ async function bootstrap() {
     movementAI.resumeAndWander();
     spawnEffect('sparkle');
     soundManager.play('wake');
+    dog.setAccompanySleep(false); // 小狗也一起醒来
     pet.dialogue.say('wake'); // 起床迷糊台词（随后 checkSchedule 会补一句早安）
   };
 
@@ -496,6 +537,7 @@ async function bootstrap() {
   eventBus.on('pet:nightwake', () => {
     if (!pet.isSleeping) return;
     movementAI.pause(); // 停止走向椅子
+    dog.setAccompanySleep(false); // 团团被吵醒时小狗也暂时起来一下
     // 播放起床动画（短暂"起来"）
     playFrames(WAKE_FRAMES, CONFIG.nightSleep.wakeFrameMs, () => {
       const mood = chance(0.5) ? 'angry' : 'confused';
